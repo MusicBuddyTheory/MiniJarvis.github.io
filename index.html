@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NOVA // Command Interface</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="scanlines"></div>
+
+  <header class="topbar">
+    <div class="brand">NOVA <span>// COMMAND INTERFACE</span></div>
+    <div class="topbar-right">
+      <span id="net" class="pill">NET: --</span>
+      <span id="clock" class="clock">--:--:--</span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- LEFT PANEL -->
+    <aside class="panel left">
+      <h3>SYSTEM STATUS <small>(simulated)</small></h3>
+      <div class="meter"><label>CORE</label><div class="bar"><i id="m1"></i></div></div>
+      <div class="meter"><label>MEMORY</label><div class="bar"><i id="m2"></i></div></div>
+      <div class="meter"><label>NEURAL LINK</label><div class="bar"><i id="m3"></i></div></div>
+      <div class="meter"><label>POWER</label><div class="bar"><i id="m4"></i></div></div>
+
+      <h3>TELEMETRY</h3>
+      <div class="kv"><span>DATE</span><b id="date">--</b></div>
+      <div class="kv"><span>UPTIME</span><b id="uptime">00:00</b></div>
+      <div class="kv"><span>STATE</span><b id="state">STANDBY</b></div>
+      <div class="kv"><span>MESSAGES</span><b id="count">0</b></div>
+    </aside>
+
+    <!-- CENTER REACTOR -->
+    <section class="center">
+      <div class="reactor" id="reactor">
+        <svg viewBox="0 0 400 400" aria-hidden="true">
+          <circle class="ring r1" cx="200" cy="200" r="190"/>
+          <circle class="ring r2" cx="200" cy="200" r="160"/>
+          <circle class="ring r3" cx="200" cy="200" r="125"/>
+          <circle class="ring r4" cx="200" cy="200" r="90"/>
+          <g class="ticks"></g>
+          <circle class="core" cx="200" cy="200" r="48"/>
+        </svg>
+        <div class="reactor-label" id="reactorLabel">ONLINE</div>
+      </div>
+      <div class="controls">
+        <button id="micBtn" class="btn">🎙 TALK</button>
+        <button id="ttsBtn" class="btn on">🔊 VOICE: ON</button>
+        <button id="clearBtn" class="btn">⟲ CLEAR</button>
+      </div>
+    </section>
+
+    <!-- RIGHT CHAT -->
+    <aside class="panel right">
+      <h3>COMMS LOG</h3>
+      <div id="log" class="log"></div>
+      <form id="form" class="input-row">
+        <input id="input" autocomplete="off" placeholder="Type a command or question...">
+        <button class="btn" type="submit">SEND</button>
+      </form>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
