@@ -1,66 +1,53 @@
-# NOVA — Command Interface
+# NOVA — Command Interface (100% free setup)
 
-A sci-fi HUD website with a voice-enabled AI assistant powered by Claude.
+A sci-fi HUD website with a voice-enabled AI assistant. No credit card, no API key.
 
 ```
 index.html   the page
 style.css    the HUD look
 app.js       UI + chat + voice (runs in the browser)
-worker.js    tiny backend that holds your API key (runs on Cloudflare)
+worker.js    free AI backend (runs on Cloudflare Workers AI)
+worker-claude-paid.js   optional: swap-in version that uses Claude (costs money)
 ```
 
-The site works immediately in **demo mode** (no AI, just the interface). Follow
-the steps below to connect real Claude.
-
----
+The site works immediately in **demo mode** (just the interface). Do the steps below
+to turn the AI on. It takes about 5 minutes, once.
 
 ## 1. Put the site on GitHub Pages
 
-1. Create a new GitHub repo and upload `index.html`, `style.css`, `app.js`
-   (you can upload `worker.js` and this README too; they're harmless).
+1. Create a new GitHub repo and upload `index.html`, `style.css`, `app.js`.
 2. Repo **Settings → Pages → Deploy from branch → main / root**.
 3. Your site will be at `https://YOURNAME.github.io/REPO-NAME/`.
 
-## 2. Get an API key
+## 2. Deploy the free AI backend
 
-1. Make an account at <https://console.anthropic.com>.
-2. Add a small amount of credit and **set a monthly spend limit** (Settings → Limits).
-   Start with something like $5. This is your safety net.
-3. Create an API key. Treat it like a password.
+1. Make a free account at <https://dash.cloudflare.com> (no card needed).
+2. **Workers & Pages → Create → Start with Hello World** (name it `nova-proxy`) → Deploy.
+3. Click **Edit code**, delete what's there, paste all of `worker.js`, click **Deploy**.
+4. Go to the Worker's **Settings → Bindings → Add → Workers AI**.
+   Set the variable name to exactly `AI` and save.
+5. Copy the Worker URL (looks like `https://nova-proxy.yourname.workers.dev`).
 
-## 3. Deploy the proxy (keeps your key out of GitHub)
+Optional but recommended: **Settings → Variables and Secrets → Add** a text variable
+named `ALLOWED_ORIGIN` with value `https://YOURNAME.github.io` so only your site can use it.
 
-Never put the API key in `app.js`. Anything in a GitHub repo or a website is public,
-and people will find and drain the key.
+## 3. Connect the site
 
-1. Make a free account at <https://dash.cloudflare.com>.
-2. **Workers & Pages → Create → Worker**, name it `nova-proxy`, deploy, then **Edit code**.
-3. Paste the contents of `worker.js` and deploy.
-4. In the Worker's **Settings → Variables and Secrets**, add:
-   - `ANTHROPIC_API_KEY` (type **Secret**): your key
-   - `ALLOWED_ORIGIN` (type **Text**): `https://YOURNAME.github.io` (no trailing slash, no path)
-5. Copy the Worker URL (like `https://nova-proxy.yourname.workers.dev`).
-
-## 4. Connect the site to the proxy
-
-In `app.js`, set:
+In `app.js`, change:
 
 ```js
 WORKER_URL: "https://nova-proxy.yourname.workers.dev",
 ```
 
-Commit. After GitHub Pages rebuilds (about a minute), the badge turns green and NOVA
-answers with real AI.
+Commit. Wait about a minute for GitHub Pages, refresh, and the badge turns green.
 
 ## Notes
 
-- **Voice input** uses the browser's Speech Recognition (best in Chrome / Edge).
-  **Voice output** uses built-in browser text-to-speech. Both are free.
-- **Cost:** the Claude API is pay-per-use, not free or unlimited. The worker uses the
-  cheapest model and caps reply length, so casual use costs very little, but set the
-  spend limit anyway.
-- **Anyone who visits your site can use your proxy** (and spend your credit). The
-  `ALLOWED_ORIGIN` check stops other websites, not people on yours. If you share the
-  link widely, add a login or rate limiting first.
-- **Email / calendar access** is a later step. It needs Google OAuth and a backend
-  that stores tokens securely. Don't try to do it from the browser code.
+- **Free limits:** Cloudflare gives 10,000 Neurons per day free, resetting at midnight UTC.
+  On the free plan, going over just makes requests fail until the reset, so you can't be
+  charged. NOVA tells you when it happens.
+- **Quality:** this is a small open model, not Claude. Great for chat and quick help,
+  weaker on complex work. To use Claude instead, deploy `worker-claude-paid.js` (needs an
+  Anthropic API key and credit).
+- **Voice** uses your browser's built-in speech tools (best in Chrome / Edge). Free.
+- **Email access** is a later project. It needs Google login and secure token storage.
