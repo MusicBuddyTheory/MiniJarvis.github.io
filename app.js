@@ -316,7 +316,7 @@ if (!SR) {
     rec = new SR();
     rec.lang = navigator.language || "en-US";
     rec.interimResults = true;
-    rec.continuous = true;          // keep listening through short pauses
+    rec.continuous = false;         // one phrase at a time (continuous mode duplicates text on iPad/Safari)
     finalText = "";
     failed = false;
     els.input.value = "";
@@ -329,13 +329,12 @@ if (!SR) {
     };
 
     rec.onresult = (e) => {
-      let fin = "", interim = "";
-      for (let i = 0; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (r.isFinal) fin += r[0].transcript; else interim += r[0].transcript;
-      }
-      finalText = fin;
-      els.input.value = (fin + " " + interim).trim();
+      // Use only the newest result: each one already holds the full phrase so far.
+      // (Adding them together is what made iPad repeat words over and over.)
+      const last = e.results[e.results.length - 1];
+      const heard = ((last && last[0] && last[0].transcript) || "").trim();
+      if (last && last.isFinal) finalText = heard;
+      els.input.value = heard;
       // after a short pause in speech, stop and send
       clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => { try { rec.stop(); } catch (_) {} }, 1800);
