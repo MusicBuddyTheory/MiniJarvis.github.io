@@ -284,3 +284,6 @@ select.btn option { background: #06202f; color: #dff8ff; }
 @media (prefers-reduced-motion: reduce) {
   .holo, .ring, .ticks, .core, .radar .sweep, .radar .blip { animation: none; }
 }
+
+select.btn optgroup { background: #06202f; color: #7dd8f0; font-style: normal; }
+select.btn { max-width: 230px; }
