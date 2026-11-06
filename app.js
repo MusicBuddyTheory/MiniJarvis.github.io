@@ -1,11 +1,11 @@
 // ============================================================
-//  NOVA — Command Interface
+//  Calvin — Command Interface
 //  Set WORKER_URL after you deploy worker.js (see README.md).
 //  NEVER put your Anthropic API key in this file.
 // ============================================================
 const CONFIG = {
-  WORKER_URL: "",   // e.g. "https://nova-proxy.yourname.workers.dev"
-  NAME: "NOVA",
+  WORKER_URL: "https://calvin-proxy.liberlupus-boxing.workers.dev",
+  NAME: "Calvin",
 };
 
 const $ = (id) => document.getElementById(id);
