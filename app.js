@@ -11,7 +11,7 @@ const CONFIG = {
 const $ = (id) => document.getElementById(id);
 const els = {
   log: $("log"), form: $("form"), input: $("input"),
-  reactor: $("reactor"), reactorLabel: $("reactorLabel"),
+  reactor: $("reactor"),
   state: $("state"), count: $("count"),
   mic: $("micBtn"), tts: $("ttsBtn"), clear: $("clearBtn"),
   net: $("net"), clock: $("clock"), date: $("date"), uptime: $("uptime"),
@@ -58,7 +58,6 @@ setInterval(jitterMeters, 2200); jitterMeters();
 
 function setState(name) {
   els.state.textContent = name.toUpperCase();
-  els.reactorLabel.textContent = name.toUpperCase();
   els.reactor.classList.remove("listening", "thinking", "speaking");
   if (["listening", "thinking", "speaking"].includes(name)) els.reactor.classList.add(name);
 }
@@ -152,17 +151,95 @@ els.clear.addEventListener("click", () => {
 });
 
 // ---------- voice out ----------
+const VOICE_KEY = "calvin_voice";
+const voiceSel = $("voiceSel");
+let voices = [];
+let speakToken = 0;
+
+// Rank voices so the most natural-sounding ones come first.
+function scoreVoice(v) {
+  const n = v.name.toLowerCase();
+  let s = 0;
+  if (/^en/i.test(v.lang)) s += 10;
+  if (/natural|neural|online/.test(n)) s += 50;                 // Edge's neural voices sound best
+  if (/ryan|guy|brian|arthur|oliver|thomas|davis|andrew/.test(n)) s += 20;
+  if (/google uk english male|daniel|alex|fred/.test(n)) s += 15;
+  if (/google/.test(n)) s += 8;
+  if (/female/.test(n)) s -= 2;
+  if (/espeak|compact|novelty/.test(n)) s -= 40;
+  return s;
+}
+
+function populateVoices() {
+  if (!("speechSynthesis" in window) || !voiceSel) return;
+  voices = speechSynthesis.getVoices()
+    .filter((v) => /^en/i.test(v.lang))
+    .sort((a, b) => scoreVoice(b) - scoreVoice(a));
+  let saved = "";
+  try { saved = localStorage.getItem(VOICE_KEY) || ""; } catch (_) {}
+  voiceSel.innerHTML = "";
+  voices.forEach((v) => {
+    const o = document.createElement("option");
+    o.value = v.name;
+    o.textContent = v.name.replace(/^Microsoft /, "").replace(/ - English.*$/, "");
+    voiceSel.appendChild(o);
+  });
+  if (voices.length) {
+    voiceSel.value = voices.some((v) => v.name === saved) ? saved : voices[0].name;
+  }
+}
+if ("speechSynthesis" in window) {
+  populateVoices();
+  speechSynthesis.onvoiceschanged = populateVoices;
+}
+
+function cleanForSpeech(t) {
+  return t
+    .replace(/```[\s\S]*?```/g, " code block. ")
+    .replace(/https?:\/\/\S+/g, "link")
+    .replace(/[*_#`>~]/g, "")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Speak in sentence-sized pieces: sounds more natural and avoids Chrome cutting off long text.
+function chunks(t) {
+  const parts = t.match(/[^.!?]+[.!?]*\s*/g) || [t];
+  const out = [];
+  let cur = "";
+  for (const p of parts) {
+    if ((cur + p).length > 200 && cur) { out.push(cur); cur = p; } else cur += p;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 function speak(text) {
   if (!voiceOn || !("speechSynthesis" in window)) { setState("online"); return; }
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text.slice(0, 600));
-  u.rate = 1.02; u.pitch = 0.9;
-  const voices = speechSynthesis.getVoices();
-  const pick = voices.find((v) => /en-GB|en-US/.test(v.lang) && /male|daniel|google uk/i.test(v.name));
-  if (pick) u.voice = pick;
-  u.onstart = () => setState("speaking");
-  u.onend = u.onerror = () => setState("online");
-  speechSynthesis.speak(u);
+  const token = ++speakToken;
+  const parts = chunks(cleanForSpeech(text).slice(0, 1200));
+  if (!parts.length) { setState("online"); return; }
+  const chosen = voices.find((v) => voiceSel && v.name === voiceSel.value);
+  parts.forEach((p, i) => {
+    const u = new SpeechSynthesisUtterance(p);
+    if (chosen) u.voice = chosen;
+    u.rate = 1.03;
+    u.pitch = 1;
+    if (i === 0) u.onstart = () => { if (token === speakToken) setState("speaking"); };
+    if (i === parts.length - 1) {
+      u.onend = u.onerror = () => { if (token === speakToken) setState("online"); };
+    }
+    speechSynthesis.speak(u);
+  });
+}
+
+if (voiceSel) {
+  voiceSel.addEventListener("change", () => {
+    try { localStorage.setItem(VOICE_KEY, voiceSel.value); } catch (_) {}
+    speak("Hello, I'm Calvin. How does this voice sound?");
+  });
 }
 
 els.tts.addEventListener("click", () => {
