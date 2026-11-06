@@ -87,7 +87,7 @@ function addMsg(role, text) {
 }
 
 addMsg("system", CONFIG.WORKER_URL
-  ? "Systems online. Type or hold TALK to speak."
+  ? "Systems online. Type, or tap TALK and speak."
   : "Demo mode: no AI backend connected yet. Follow README.md to connect Claude. Try asking for the time or date.");
 
 // ---------- AI call ----------
@@ -156,18 +156,26 @@ const voiceSel = $("voiceSel");
 let voices = [];
 let speakToken = 0;
 
+// Browsers don't say which voices are male, so recognise common male voice names.
+const MALE_NAMES = /\b(guy|ryan|christopher|eric|roger|steffan|brian|andrew|davis|jason|tony|william|mark|david|george|james|richard|sean|ravi|prabhat|liam|thomas|connor|mitchell|neil|jacob|alfie|elliot|rishi|daniel|alex|fred|aaron|arthur|gordon|evan|nathan|oliver|reed|tom|lee|ralph|henry|oscar|male|man)\b/i;
+const isMale = (v) => MALE_NAMES.test(v.name) && !/female/i.test(v.name);
+
 // Rank voices so the most natural-sounding ones come first.
 function scoreVoice(v) {
   const n = v.name.toLowerCase();
   let s = 0;
   if (/^en/i.test(v.lang)) s += 10;
-  if (/natural|neural|online/.test(n)) s += 50;                 // Edge's neural voices sound best
-  if (/ryan|guy|brian|arthur|oliver|thomas|davis|andrew/.test(n)) s += 20;
+  if (/natural|neural|online/.test(n)) s += 50;      // Edge's neural voices sound best
   if (/google uk english male|daniel|alex|fred/.test(n)) s += 15;
   if (/google/.test(n)) s += 8;
-  if (/female/.test(n)) s -= 2;
   if (/espeak|compact|novelty/.test(n)) s -= 40;
   return s;
+}
+
+function voiceLabel(v) {
+  const base = v.name.replace(/^Microsoft /, "").replace(/ - English.*$/, "").trim();
+  const region = (v.lang.split(/[-_]/)[1] || "").toUpperCase();
+  return region ? base + " · " + region : base;
 }
 
 function populateVoices() {
@@ -175,18 +183,36 @@ function populateVoices() {
   voices = speechSynthesis.getVoices()
     .filter((v) => /^en/i.test(v.lang))
     .sort((a, b) => scoreVoice(b) - scoreVoice(a));
+
+  const male = voices.filter(isMale);
+  const other = voices.filter((v) => !isMale(v));
+
   let saved = "";
   try { saved = localStorage.getItem(VOICE_KEY) || ""; } catch (_) {}
+
   voiceSel.innerHTML = "";
-  voices.forEach((v) => {
-    const o = document.createElement("option");
-    o.value = v.name;
-    o.textContent = v.name.replace(/^Microsoft /, "").replace(/ - English.*$/, "");
-    voiceSel.appendChild(o);
-  });
-  if (voices.length) {
-    voiceSel.value = voices.some((v) => v.name === saved) ? saved : voices[0].name;
-  }
+  const addGroup = (label, items) => {
+    if (!items.length) return;
+    const g = document.createElement("optgroup");
+    g.label = label;
+    items.forEach((it) => {
+      const o = document.createElement("option");
+      o.value = it.value;
+      o.textContent = it.text;
+      g.appendChild(o);
+    });
+    voiceSel.appendChild(g);
+  };
+
+  // every male voice, plus lower-pitched "deep" versions of the best few
+  const maleItems = [];
+  male.forEach((v) => maleItems.push({ value: v.name + "|1|1.03", text: voiceLabel(v) }));
+  male.slice(0, 6).forEach((v) => maleItems.push({ value: v.name + "|0.75|0.97", text: voiceLabel(v) + " (deep)" }));
+  addGroup("Male voices", maleItems);
+  addGroup("Other voices", other.map((v) => ({ value: v.name + "|1|1.03", text: voiceLabel(v) })));
+
+  const values = Array.from(voiceSel.options).map((o) => o.value);
+  if (values.length) voiceSel.value = values.includes(saved) ? saved : values[0];
 }
 if ("speechSynthesis" in window) {
   populateVoices();
@@ -221,12 +247,15 @@ function speak(text) {
   const token = ++speakToken;
   const parts = chunks(cleanForSpeech(text).slice(0, 1200));
   if (!parts.length) { setState("online"); return; }
-  const chosen = voices.find((v) => voiceSel && v.name === voiceSel.value);
+
+  const [vName, vPitch, vRate] = (voiceSel && voiceSel.value ? voiceSel.value : "").split("|");
+  const chosen = voices.find((v) => v.name === vName);
+
   parts.forEach((p, i) => {
     const u = new SpeechSynthesisUtterance(p);
     if (chosen) u.voice = chosen;
-    u.rate = 1.03;
-    u.pitch = 1;
+    u.pitch = parseFloat(vPitch) || 1;
+    u.rate = parseFloat(vRate) || 1.03;
     if (i === 0) u.onstart = () => { if (token === speakToken) setState("speaking"); };
     if (i === parts.length - 1) {
       u.onend = u.onerror = () => { if (token === speakToken) setState("online"); };
@@ -238,7 +267,10 @@ function speak(text) {
 if (voiceSel) {
   voiceSel.addEventListener("change", () => {
     try { localStorage.setItem(VOICE_KEY, voiceSel.value); } catch (_) {}
+    const wasOn = voiceOn;
+    voiceOn = true;
     speak("Hello, I'm Calvin. How does this voice sound?");
+    voiceOn = wasOn;
   });
 }
 
@@ -252,39 +284,82 @@ els.tts.addEventListener("click", () => {
 
 // ---------- voice in ----------
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+const MIC_HELP = {
+  "not-allowed": "Microphone access is blocked for this site. Click the lock icon next to the web address, set Microphone to Allow, then reload the page.",
+  "service-not-allowed": "Microphone access is blocked for this site. Click the lock icon next to the web address, set Microphone to Allow, then reload the page.",
+  "audio-capture": "No microphone found. Check that one is connected and selected in your system sound settings.",
+  "network": "The browser's speech service couldn't be reached. Brave and some other browsers block it. Try Chrome or Edge, and check your internet connection.",
+  "no-speech": "I didn't hear anything. Tap TALK, then start speaking right away.",
+};
+
 if (!SR) {
   els.mic.disabled = true;
   els.mic.title = "Speech recognition isn't supported in this browser (try Chrome or Edge).";
+  addMsg("system", "Voice input isn't supported in this browser. Try Chrome or Edge. Typing still works.");
 } else {
-  const rec = new SR();
-  rec.lang = "en-US";
-  rec.interimResults = true;
-  rec.continuous = false;
-  let finalText = "";
+  let rec = null;
   let listening = false;
+  let finalText = "";
+  let failed = false;
+  let silenceTimer = null;
 
-  rec.onstart = () => { listening = true; els.mic.classList.add("active"); els.mic.textContent = "🎙 LISTENING…"; setState("listening"); };
-  rec.onresult = (e) => {
-    let interim = "";
-    finalText = "";
-    for (const r of e.results) {
-      if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
-    }
-    els.input.value = finalText || interim;
-  };
-  rec.onend = () => {
+  const resetMicUI = () => {
     listening = false;
     els.mic.classList.remove("active");
     els.mic.textContent = "🎙 TALK";
-    if (finalText.trim()) { els.input.value = ""; send(finalText); }
-    else setState("online");
-    finalText = "";
   };
-  rec.onerror = () => { listening = false; els.mic.classList.remove("active"); els.mic.textContent = "🎙 TALK"; setState("online"); };
+
+  function startListening() {
+    if (busy) return;
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    rec = new SR();
+    rec.lang = navigator.language || "en-US";
+    rec.interimResults = true;
+    rec.continuous = true;          // keep listening through short pauses
+    finalText = "";
+    failed = false;
+    els.input.value = "";
+
+    rec.onstart = () => {
+      listening = true;
+      els.mic.classList.add("active");
+      els.mic.textContent = "🎙 LISTENING…";
+      setState("listening");
+    };
+
+    rec.onresult = (e) => {
+      let fin = "", interim = "";
+      for (let i = 0; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) fin += r[0].transcript; else interim += r[0].transcript;
+      }
+      finalText = fin;
+      els.input.value = (fin + " " + interim).trim();
+      // after a short pause in speech, stop and send
+      clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => { try { rec.stop(); } catch (_) {} }, 1800);
+    };
+
+    rec.onerror = (e) => {
+      failed = true;
+      if (e.error !== "aborted") addMsg("system", MIC_HELP[e.error] || ("Microphone error: " + e.error));
+    };
+
+    rec.onend = () => {
+      clearTimeout(silenceTimer);
+      resetMicUI();
+      const text = (els.input.value || finalText).trim();
+      if (!failed && text) { els.input.value = ""; send(text); }
+      else setState("online");
+    };
+
+    try { rec.start(); }
+    catch (err) { resetMicUI(); addMsg("system", "Couldn't start the microphone: " + err.message); }
+  }
 
   els.mic.addEventListener("click", () => {
-    if (listening) { rec.stop(); return; }
-    speechSynthesis.cancel();
-    try { rec.start(); } catch (_) {}
+    if (listening) { try { rec.stop(); } catch (_) {} }
+    else startListening();
   });
 }
