@@ -17,39 +17,44 @@
     <div class="bg-lights"></div>
     <canvas id="particles"></canvas>
 
-    <!-- hologram: wireframe motorcycle -->
-    <svg class="holo holo-bike" viewBox="0 0 600 340">
-      <g class="wf">
-        <circle cx="130" cy="240" r="78"/><circle cx="130" cy="240" r="58"/><circle cx="130" cy="240" r="10"/>
-        <circle class="spokes" cx="130" cy="240" r="34"/>
-        <circle cx="470" cy="240" r="78"/><circle cx="470" cy="240" r="58"/><circle cx="470" cy="240" r="10"/>
-        <circle class="spokes" cx="470" cy="240" r="34"/>
-        <path d="M130 240 L235 190 L335 175 L395 205 L470 240"/>
-        <path d="M130 240 L285 232 M285 232 L335 175 M285 232 L395 205"/>
-        <path d="M470 240 L425 125 M425 125 L455 112 M425 125 L398 118 M440 160 L470 150"/>
-        <path d="M235 190 Q245 140 300 135 Q350 135 352 170 L335 175 Z"/>
-        <path d="M200 182 Q165 168 135 182 L235 192 Z"/>
-        <rect x="268" y="196" width="90" height="46"/>
-        <path d="M268 211 H358 M268 226 H358 M298 196 V242 M328 196 V242"/>
-        <path d="M300 246 L215 258 L150 256"/>
-        <path d="M20 318 H580"/>
-      </g>
-    </svg>
+    <!-- floating holographic screens -->
+    <div class="fscreen fs-a">
+      <div class="fs-title">ORBITAL MAP</div>
+      <svg viewBox="0 0 160 110">
+        <circle cx="80" cy="55" r="44"/>
+        <ellipse cx="80" cy="55" rx="44" ry="16"/>
+        <ellipse cx="80" cy="55" rx="44" ry="30"/>
+        <ellipse cx="80" cy="55" rx="16" ry="44"/>
+        <ellipse cx="80" cy="55" rx="30" ry="44"/>
+        <path d="M36 55 H124 M80 11 V99"/>
+        <circle class="dash" cx="80" cy="55" r="52"/>
+        <circle class="pt" cx="104" cy="38" r="2.5"/>
+        <circle class="pt" style="animation-delay:1s" cx="58" cy="70" r="2.5"/>
+        <circle class="pt" style="animation-delay:2s" cx="92" cy="76" r="2.5"/>
+      </svg>
+    </div>
 
-    <!-- hologram: wireframe classic car -->
-    <svg class="holo holo-car" viewBox="0 0 600 300">
-      <g class="wf">
-        <path d="M20 205 L70 198 L120 140 Q165 100 265 96 L385 96 Q455 100 505 150 L565 178 L585 205 L585 232 L20 232 Z"/>
-        <path d="M135 142 Q170 112 255 108 L255 160 L120 160 Z"/>
-        <path d="M270 108 L380 108 Q430 112 470 150 L470 160 L270 160 Z"/>
-        <path d="M20 205 H585 M255 108 V232 M470 160 V232 M120 160 V232"/>
-        <circle cx="140" cy="236" r="44"/><circle cx="140" cy="236" r="30"/>
-        <circle class="spokes" cx="140" cy="236" r="18"/>
-        <circle cx="465" cy="236" r="44"/><circle cx="465" cy="236" r="30"/>
-        <circle class="spokes" cx="465" cy="236" r="18"/>
-        <path d="M0 282 H600"/>
-      </g>
-    </svg>
+    <div class="fscreen fs-b">
+      <div class="fs-title">SIGNAL ANALYSIS</div>
+      <div class="eq"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+
+    <div class="fscreen fs-c">
+      <div class="fs-title">POWER ROUTING</div>
+      <div class="gauges">
+        <svg viewBox="0 0 60 60"><circle class="g-bg" cx="30" cy="30" r="24"/><circle class="g-fg" cx="30" cy="30" r="24" stroke-dasharray="108.6 150.8"/><text x="30" y="34">72</text></svg>
+        <svg viewBox="0 0 60 60"><circle class="g-bg" cx="30" cy="30" r="24"/><circle class="g-fg" cx="30" cy="30" r="24" stroke-dasharray="67.9 150.8"/><text x="30" y="34">45</text></svg>
+        <svg viewBox="0 0 60 60"><circle class="g-bg" cx="30" cy="30" r="24"/><circle class="g-fg" cx="30" cy="30" r="24" stroke-dasharray="132.7 150.8"/><text x="30" y="34">88</text></svg>
+      </div>
+    </div>
+
+    <div class="fscreen fs-d">
+      <div class="fs-title">DIAGNOSTICS</div>
+      <div class="kv"><span>SYNC</span><b>OK</b></div>
+      <div class="kv"><span>UPLINK</span><b>STABLE</b></div>
+      <div class="kv"><span>CACHE</span><b>94%</b></div>
+      <div class="kv"><span>SENSORS</span><b>ARMED</b></div>
+    </div>
 
     <div class="desk"></div>
   </div>
@@ -106,12 +111,12 @@
           <g class="ticks"></g>
           <circle class="core" cx="200" cy="200" r="48"/>
         </svg>
-        <div class="reactor-label" id="reactorLabel">ONLINE</div>
       </div>
       <div class="controls">
         <button id="micBtn" class="btn">🎙 TALK</button>
         <button id="ttsBtn" class="btn on">🔊 VOICE: ON</button>
         <button id="clearBtn" class="btn">⟲ CLEAR</button>
+        <select id="voiceSel" class="btn" title="Choose a voice" aria-label="Voice"></select>
       </div>
     </section>
 
