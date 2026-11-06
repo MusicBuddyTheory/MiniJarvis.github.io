@@ -3,14 +3,61 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NOVA // Command Interface</title>
+  <title>Calvin // Workshop Interface</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
+  <!-- ===== BACKGROUND SCENE ===== -->
+  <div class="scene" aria-hidden="true">
+    <div class="bg-glow"></div>
+    <div class="bg-lights"></div>
+    <canvas id="particles"></canvas>
+
+    <!-- hologram: wireframe motorcycle -->
+    <svg class="holo holo-bike" viewBox="0 0 600 340">
+      <g class="wf">
+        <circle cx="130" cy="240" r="78"/><circle cx="130" cy="240" r="58"/><circle cx="130" cy="240" r="10"/>
+        <circle class="spokes" cx="130" cy="240" r="34"/>
+        <circle cx="470" cy="240" r="78"/><circle cx="470" cy="240" r="58"/><circle cx="470" cy="240" r="10"/>
+        <circle class="spokes" cx="470" cy="240" r="34"/>
+        <path d="M130 240 L235 190 L335 175 L395 205 L470 240"/>
+        <path d="M130 240 L285 232 M285 232 L335 175 M285 232 L395 205"/>
+        <path d="M470 240 L425 125 M425 125 L455 112 M425 125 L398 118 M440 160 L470 150"/>
+        <path d="M235 190 Q245 140 300 135 Q350 135 352 170 L335 175 Z"/>
+        <path d="M200 182 Q165 168 135 182 L235 192 Z"/>
+        <rect x="268" y="196" width="90" height="46"/>
+        <path d="M268 211 H358 M268 226 H358 M298 196 V242 M328 196 V242"/>
+        <path d="M300 246 L215 258 L150 256"/>
+        <path d="M20 318 H580"/>
+      </g>
+    </svg>
+
+    <!-- hologram: wireframe classic car -->
+    <svg class="holo holo-car" viewBox="0 0 600 300">
+      <g class="wf">
+        <path d="M20 205 L70 198 L120 140 Q165 100 265 96 L385 96 Q455 100 505 150 L565 178 L585 205 L585 232 L20 232 Z"/>
+        <path d="M135 142 Q170 112 255 108 L255 160 L120 160 Z"/>
+        <path d="M270 108 L380 108 Q430 112 470 150 L470 160 L270 160 Z"/>
+        <path d="M20 205 H585 M255 108 V232 M470 160 V232 M120 160 V232"/>
+        <circle cx="140" cy="236" r="44"/><circle cx="140" cy="236" r="30"/>
+        <circle class="spokes" cx="140" cy="236" r="18"/>
+        <circle cx="465" cy="236" r="44"/><circle cx="465" cy="236" r="30"/>
+        <circle class="spokes" cx="465" cy="236" r="18"/>
+        <path d="M0 282 H600"/>
+      </g>
+    </svg>
+
+    <div class="desk"></div>
+  </div>
   <div class="scanlines"></div>
 
+  <!-- ===== INTERFACE ===== -->
   <header class="topbar">
-    <div class="brand">NOVA <span>// COMMAND INTERFACE</span></div>
+    <div class="brand">CALVIN <span>// WORKSHOP INTERFACE</span></div>
     <div class="topbar-right">
       <span id="net" class="pill">NET: --</span>
       <span id="clock" class="clock">--:--:--</span>
@@ -26,11 +73,26 @@
       <div class="meter"><label>NEURAL LINK</label><div class="bar"><i id="m3"></i></div></div>
       <div class="meter"><label>POWER</label><div class="bar"><i id="m4"></i></div></div>
 
-      <h3>TELEMETRY</h3>
-      <div class="kv"><span>DATE</span><b id="date">--</b></div>
-      <div class="kv"><span>UPTIME</span><b id="uptime">00:00</b></div>
-      <div class="kv"><span>STATE</span><b id="state">STANDBY</b></div>
-      <div class="kv"><span>MESSAGES</span><b id="count">0</b></div>
+      <h3>VOICE SIGNAL</h3>
+      <div class="widget"><canvas id="wave"></canvas></div>
+
+      <h3>PROXIMITY SCAN</h3>
+      <div class="widget radar-wrap">
+        <svg class="radar" viewBox="0 0 120 120" aria-hidden="true">
+          <circle cx="60" cy="60" r="56"/><circle cx="60" cy="60" r="38"/><circle cx="60" cy="60" r="20"/>
+          <path d="M60 4 V116 M4 60 H116"/>
+          <path class="sweep" d="M60 60 L60 4 A56 56 0 0 1 99.6 20.4 Z"/>
+          <circle class="blip b1" cx="82" cy="38" r="2.5"/>
+          <circle class="blip b2" cx="40" cy="78" r="2.5"/>
+          <circle class="blip b3" cx="70" cy="86" r="2.5"/>
+        </svg>
+        <div class="telemetry">
+          <div class="kv"><span>DATE</span><b id="date">--</b></div>
+          <div class="kv"><span>UPTIME</span><b id="uptime">00:00</b></div>
+          <div class="kv"><span>STATE</span><b id="state">STANDBY</b></div>
+          <div class="kv"><span>MESSAGES</span><b id="count">0</b></div>
+        </div>
+      </div>
     </aside>
 
     <!-- CENTER REACTOR -->
@@ -65,5 +127,80 @@
   </main>
 
   <script src="app.js"></script>
+  <script>
+    // ----- floating particles -----
+    (function () {
+      const c = document.getElementById("particles");
+      const ctx = c.getContext("2d");
+      let w, h, dots = [];
+      function resize() {
+        w = c.width = innerWidth; h = c.height = innerHeight;
+        const n = Math.min(90, Math.floor((w * h) / 18000));
+        dots = Array.from({ length: n }, () => ({
+          x: Math.random() * w, y: Math.random() * h,
+          r: Math.random() * 1.8 + 0.4,
+          vx: (Math.random() - 0.5) * 0.15,
+          vy: -Math.random() * 0.25 - 0.05,
+          a: Math.random() * 0.7 + 0.2,
+          amber: Math.random() < 0.18,
+        }));
+      }
+      addEventListener("resize", resize);
+      resize();
+      function frame() {
+        ctx.clearRect(0, 0, w, h);
+        for (const d of dots) {
+          d.x += d.vx; d.y += d.vy;
+          if (d.y < -5) { d.y = h + 5; d.x = Math.random() * w; }
+          if (d.x < -5) d.x = w + 5;
+          if (d.x > w + 5) d.x = -5;
+          const col = d.amber ? "rgba(255,190,90," + d.a + ")" : "rgba(140,230,255," + d.a + ")";
+          ctx.beginPath();
+          ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+          ctx.fillStyle = col; ctx.shadowBlur = 8; ctx.shadowColor = col;
+          ctx.fill();
+        }
+        requestAnimationFrame(frame);
+      }
+      if (!matchMedia("(prefers-reduced-motion: reduce)").matches) frame();
+    })();
+
+    // ----- voice waveform (reacts to listening / thinking / speaking) -----
+    (function () {
+      const c = document.getElementById("wave");
+      const ctx = c.getContext("2d");
+      const reactor = document.getElementById("reactor");
+      function size() {
+        const r = c.getBoundingClientRect();
+        c.width = r.width * devicePixelRatio; c.height = r.height * devicePixelRatio;
+      }
+      size(); addEventListener("resize", size);
+      let t = 0, amp = 0.15;
+      function frame() {
+        const target = reactor.classList.contains("speaking") ? 0.95
+          : reactor.classList.contains("listening") ? 0.7
+          : reactor.classList.contains("thinking") ? 0.4 : 0.15;
+        amp += (target - amp) * 0.06; t += 0.04;
+        const w = c.width, h = c.height;
+        ctx.clearRect(0, 0, w, h);
+        ctx.lineWidth = 1.5 * devicePixelRatio;
+        ctx.strokeStyle = "rgba(120,225,255,0.95)";
+        ctx.shadowBlur = 8; ctx.shadowColor = "#4fd8ff";
+        for (let k = 0; k < 3; k++) {
+          ctx.beginPath();
+          for (let x = 0; x <= w; x += 3) {
+            const n = x / w;
+            const y = h / 2 + Math.sin(n * 12 + t * (1 + k * 0.4) + k) * Math.sin(n * Math.PI) * h * 0.42 * amp * (1 - k * 0.25);
+            if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
+          ctx.globalAlpha = 1 - k * 0.3;
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+        requestAnimationFrame(frame);
+      }
+      frame();
+    })();
+  </script>
 </body>
 </html>
