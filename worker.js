@@ -1,5 +1,5 @@
 // ============================================================
-//  NOVA proxy (FREE version) — Cloudflare Worker + Workers AI
+//  Calvin proxy (FREE version) — Cloudflare Worker + Workers AI
 //  No API key, no credit card. Uses Cloudflare's free daily AI allowance.
 //
 //  One setup step in the dashboard: add a Workers AI binding named "AI"
@@ -15,7 +15,7 @@ const MAX_MESSAGES = 10;
 const MAX_CHARS = 1500;
 
 const SYSTEM_PROMPT =
-  "You are NOVA, a calm, sharp, slightly witty AI assistant living inside a " +
+  "You are Calvin, a calm, sharp, slightly witty AI assistant living inside a " +
   "futuristic command-center interface. Your replies are read aloud, so keep " +
   "them short and conversational: plain sentences, no markdown, no bullet " +
   "lists, no emojis. Help the user get real work done.";
@@ -40,7 +40,7 @@ export default {
     const { ok, headers } = corsHeaders(env, req);
 
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
-    if (req.method !== "POST") return new Response("NOVA proxy is running.", { status: 200, headers });
+    if (req.method !== "POST") return new Response("Calvin proxy is running.", { status: 200, headers });
     if (!ok) return new Response("Forbidden origin", { status: 403, headers });
     if (!env.AI) {
       return new Response("Workers AI binding missing. Add a binding named AI.", { status: 500, headers });
