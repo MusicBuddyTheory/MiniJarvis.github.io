@@ -99,7 +99,122 @@ function demoReply(text) {
   return "I'm in demo mode, so I can only handle the time and date. Deploy worker.js and set WORKER_URL in app.js to enable full AI.";
 }
 
+// ---------- weather (Ontario) ----------
+// Free data from Open-Meteo (no key needed). Runs in your browser, not the Worker.
+const PLACES = {
+  "downtown toronto":   { name: "downtown Toronto", lat: 43.6532, lon: -79.3832 },
+  "king city":          { name: "King City",        lat: 43.9267, lon: -79.5283 },
+  "vaughan":            { name: "Vaughan",          lat: 43.8361, lon: -79.4983 },
+  "woodbridge":         { name: "Woodbridge",       lat: 43.7833, lon: -79.6000 },
+  "maple":              { name: "Maple",            lat: 43.8506, lon: -79.5106 },
+  "kleinburg":          { name: "Kleinburg",        lat: 43.8333, lon: -79.6167 },
+  "nobleton":           { name: "Nobleton",         lat: 43.9000, lon: -79.6500 },
+  "schomberg":          { name: "Schomberg",        lat: 44.0000, lon: -79.6833 },
+  "aurora":             { name: "Aurora",           lat: 44.0065, lon: -79.4504 },
+  "newmarket":          { name: "Newmarket",        lat: 44.0592, lon: -79.4613 },
+  "richmond hill":      { name: "Richmond Hill",    lat: 43.8828, lon: -79.4403 },
+  "thornhill":          { name: "Thornhill",        lat: 43.8161, lon: -79.4228 },
+  "markham":            { name: "Markham",          lat: 43.8561, lon: -79.3370 },
+  "north york":         { name: "North York",       lat: 43.7615, lon: -79.4111 },
+  "scarborough":        { name: "Scarborough",      lat: 43.7731, lon: -79.2578 },
+  "etobicoke":          { name: "Etobicoke",        lat: 43.6205, lon: -79.5132 },
+  "toronto":            { name: "Toronto",          lat: 43.6532, lon: -79.3832 },
+  "mississauga":        { name: "Mississauga",      lat: 43.5890, lon: -79.6441 },
+  "brampton":           { name: "Brampton",         lat: 43.7315, lon: -79.7624 },
+  "caledon":            { name: "Caledon",          lat: 43.8667, lon: -79.8667 },
+  "oakville":           { name: "Oakville",         lat: 43.4675, lon: -79.6877 },
+  "burlington":         { name: "Burlington",       lat: 43.3255, lon: -79.7990 },
+  "hamilton":           { name: "Hamilton",         lat: 43.2557, lon: -79.8711 },
+  "barrie":             { name: "Barrie",           lat: 44.3894, lon: -79.6903 },
+  "pickering":          { name: "Pickering",        lat: 43.8384, lon: -79.0868 },
+  "oshawa":             { name: "Oshawa",           lat: 43.8971, lon: -78.8658 },
+  "ottawa":             { name: "Ottawa",           lat: 45.4215, lon: -75.6972 },
+  "niagara falls":      { name: "Niagara Falls",    lat: 43.0896, lon: -79.0849 },
+  "kitchener":          { name: "Kitchener",        lat: 43.4516, lon: -80.4925 },
+  "london":             { name: "London, Ontario",  lat: 42.9849, lon: -81.2453 },
+};
+const PLACE_KEYS = Object.keys(PLACES).sort((a, b) => b.length - a.length); // longest first
+
+const WEATHER_WORDS = /\b(temperature|temp|weather|forecast|how (hot|cold|warm|chilly)|degrees|is it (hot|cold|warm|raining|snowing))\b/i;
+
+const WMO = {
+  0: "clear skies", 1: "mostly clear", 2: "partly cloudy", 3: "overcast",
+  45: "foggy", 48: "foggy", 51: "light drizzle", 53: "drizzle", 55: "heavy drizzle",
+  56: "freezing drizzle", 57: "freezing drizzle", 61: "light rain", 63: "rain", 65: "heavy rain",
+  66: "freezing rain", 67: "freezing rain", 71: "light snow", 73: "snow", 75: "heavy snow",
+  77: "snow grains", 80: "light showers", 81: "showers", 82: "heavy showers",
+  85: "snow showers", 86: "heavy snow showers", 95: "thunderstorms", 96: "thunderstorms with hail", 99: "thunderstorms with hail",
+};
+
+const sayTemp = (n) => (n < 0 ? "minus " + Math.abs(n) : String(n));
+
+async function getJSON(url) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 9000);
+  try {
+    const r = await fetch(url, { signal: ctl.signal });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  } finally { clearTimeout(timer); }
+}
+
+function findKnownPlace(text) {
+  const t = " " + text.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ") + " ";
+  for (const k of PLACE_KEYS) if (t.includes(" " + k + " ")) return PLACES[k];
+  return null;
+}
+
+function extractPlaceName(text) {
+  const m = text.match(/\b(?:in|for|at|near|around|of)\s+(?:the\s+)?([a-zA-Z][a-zA-Z .'\-]{1,40}?)\s*[?.!,]*\s*$/i);
+  return m ? m[1].trim() : "";
+}
+
+async function geocodeOntario(name) {
+  const url = "https://geocoding-api.open-meteo.com/v1/search?count=10&language=en&format=json&name=" + encodeURIComponent(name);
+  const data = await getJSON(url);
+  const list = (data.results || []).filter((r) => r.country_code === "CA");
+  const hit = list.find((r) => r.admin1 === "Ontario");
+  return hit ? { name: hit.name, lat: hit.latitude, lon: hit.longitude } : null;
+}
+
+async function tryWeather(text) {
+  if (!WEATHER_WORDS.test(text)) return null;
+
+  let place = findKnownPlace(text);
+  if (!place) {
+    const guess = extractPlaceName(text);
+    if (!guess) return "Which place in Ontario? For example, say: temperature in King City.";
+    try { place = await geocodeOntario(guess); }
+    catch (_) { return "I couldn't look up that place right now. Check your internet connection and try again."; }
+    if (!place) return "I couldn't find \"" + guess + "\" in Ontario. Try a nearby town, or check the spelling.";
+  }
+
+  try {
+    const url = "https://api.open-meteo.com/v1/forecast?latitude=" + place.lat + "&longitude=" + place.lon +
+      "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m" +
+      "&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=America%2FToronto";
+    const w = await getJSON(url);
+    const c = w.current;
+    const temp = Math.round(c.temperature_2m);
+    const feels = Math.round(c.apparent_temperature);
+    const hi = Math.round(w.daily.temperature_2m_max[0]);
+    const lo = Math.round(w.daily.temperature_2m_min[0]);
+    const wind = Math.round(c.wind_speed_10m);
+    const sky = WMO[c.weather_code] || "mixed conditions";
+
+    let out = "It's " + sayTemp(temp) + " degrees Celsius in " + place.name + " right now, with " + sky + ".";
+    if (Math.abs(feels - temp) >= 2) out += " It feels like " + sayTemp(feels) + ".";
+    out += " Today's high is " + sayTemp(hi) + " and the low is " + sayTemp(lo) + ".";
+    if (wind >= 20) out += " Winds around " + wind + " kilometres per hour.";
+    return out;
+  } catch (_) {
+    return "I couldn't reach the weather service for " + place.name + ". Try again in a moment.";
+  }
+}
+
 async function askAI(text) {
+  const weatherReply = await tryWeather(text);
+  if (weatherReply) return weatherReply;
   if (!CONFIG.WORKER_URL) return demoReply(text);
   const res = await fetch(CONFIG.WORKER_URL, {
     method: "POST",
@@ -152,12 +267,15 @@ els.clear.addEventListener("click", () => {
 
 // ---------- voice out ----------
 const VOICE_KEY = "calvin_voice";
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const PREFERRED_FIRST = ["mark", "guy", "ryan", "aaron", "daniel", "alex", "fred", "arthur", "tom"];
+let warnedNoMale = false;
 const voiceSel = $("voiceSel");
 let voices = [];
 let speakToken = 0;
 
 // Browsers don't say which voices are male, so recognise common male voice names.
-const MALE_NAMES = /\b(guy|ryan|christopher|eric|roger|steffan|brian|andrew|davis|jason|tony|william|mark|david|george|james|richard|sean|ravi|prabhat|liam|thomas|connor|mitchell|neil|jacob|alfie|elliot|rishi|daniel|alex|fred|aaron|arthur|gordon|evan|nathan|oliver|reed|tom|lee|ralph|henry|oscar|male|man)\b/i;
+const MALE_NAMES = /\b(guy|ryan|christopher|eric|roger|steffan|brian|andrew|davis|jason|tony|william|mark|david|george|james|richard|sean|ravi|prabhat|liam|thomas|connor|mitchell|neil|jacob|alfie|elliot|rishi|daniel|alex|fred|aaron|arthur|gordon|evan|nathan|oliver|reed|tom|lee|ralph|henry|oscar|rocko|eddy|male|man)\b/i;
 const isMale = (v) => MALE_NAMES.test(v.name) && !/female/i.test(v.name);
 
 // Rank voices so the most natural-sounding ones come first.
@@ -207,12 +325,25 @@ function populateVoices() {
   // every male voice, plus lower-pitched "deep" versions of the best few
   const maleItems = [];
   male.forEach((v) => maleItems.push({ value: v.name + "|1|1.03", text: voiceLabel(v) }));
-  male.slice(0, 6).forEach((v) => maleItems.push({ value: v.name + "|0.75|0.97", text: voiceLabel(v) + " (deep)" }));
+  if (!IS_IOS) male.slice(0, 6).forEach((v) => maleItems.push({ value: v.name + "|0.75|0.97", text: voiceLabel(v) + " (deep)" }));
   addGroup("Male voices", maleItems);
   addGroup("Other voices", other.map((v) => ({ value: v.name + "|1|1.03", text: voiceLabel(v) })));
 
   const values = Array.from(voiceSel.options).map((o) => o.value);
-  if (values.length) voiceSel.value = values.includes(saved) ? saved : values[0];
+  if (values.length) {
+    let pick = values.includes(saved) ? saved : "";
+    if (!pick) {
+      for (const pref of PREFERRED_FIRST) {
+        pick = values.find((val) => val.endsWith("|1|1.03") && val.toLowerCase().includes(pref)) || "";
+        if (pick) break;
+      }
+    }
+    voiceSel.value = pick || values[0];
+  }
+  if (IS_IOS && !male.length && !warnedNoMale && voices.length) {
+    warnedNoMale = true;
+    addMsg("system", "No male voices are installed on this device yet. On iPad: Settings > Accessibility > Spoken Content > Voices > English, then download a male voice like Aaron or Daniel. Reload this page afterwards.");
+  }
 }
 if ("speechSynthesis" in window) {
   populateVoices();
@@ -243,7 +374,7 @@ function chunks(t) {
 
 function speak(text) {
   if (!voiceOn || !("speechSynthesis" in window)) { setState("online"); return; }
-  speechSynthesis.cancel();
+  if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   const token = ++speakToken;
   const parts = chunks(cleanForSpeech(text).slice(0, 1200));
   if (!parts.length) { setState("online"); return; }
@@ -253,7 +384,7 @@ function speak(text) {
 
   parts.forEach((p, i) => {
     const u = new SpeechSynthesisUtterance(p);
-    if (chosen) u.voice = chosen;
+    if (chosen) { u.voice = chosen; u.lang = chosen.lang; }
     u.pitch = parseFloat(vPitch) || 1;
     u.rate = parseFloat(vRate) || 1.03;
     if (i === 0) u.onstart = () => { if (token === speakToken) setState("speaking"); };
