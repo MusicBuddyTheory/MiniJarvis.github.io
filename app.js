@@ -351,13 +351,14 @@ let speakToken = 0;
 const MALE_NAMES = /\b(guy|ryan|christopher|eric|roger|steffan|brian|andrew|davis|jason|tony|william|mark|david|george|james|richard|sean|ravi|prabhat|liam|thomas|connor|mitchell|neil|jacob|alfie|elliot|rishi|daniel|alex|fred|aaron|arthur|gordon|evan|nathan|oliver|reed|tom|lee|ralph|henry|oscar|male|man)\b/i;
 const isMale = (v) => MALE_NAMES.test(v.name) && !/female/i.test(v.name);
 // Warm, natural-sounding guys first.
-const PREFERRED = ["guy", "ryan", "mark", "andrew", "brian", "christopher", "aaron", "daniel", "alex", "arthur", "tom", "fred"];
+const PREFERRED = ["ryan", "thomas", "george", "daniel", "arthur", "oliver", "google uk english male", "guy", "mark", "andrew", "brian", "alex", "aaron", "fred"];
 
 function scoreVoice(v) {
   const n = v.name.toLowerCase();
   let s = 0;
   if (/^en/i.test(v.lang)) s += 10;
   if (/^en[-_](us|ca|gb)/i.test(v.lang)) s += 4;
+  if (/^en[-_]gb/i.test(v.lang)) s += 80;          // British accent first
   if (/natural|neural|online/.test(n)) s += 50;
   if (/google/.test(n)) s += 6;
   if (/espeak|compact|novelty/.test(n)) s -= 40;
@@ -372,6 +373,10 @@ function pickVoice() {
   if (!all.length) return;
   const male = all.filter(isMale).sort((a, b) => scoreVoice(b) - scoreVoice(a));
   calvinVoice = male[0] || all.sort((a, b) => scoreVoice(b) - scoreVoice(a))[0];
+  if (male.length && !/^en[-_]gb/i.test(calvinVoice.lang) && !pickVoice.warnedGB) {
+    pickVoice.warnedGB = true;
+    addMsg("system", "No British male voice found on this device, so Calvin is using the closest one. Edge has the best British voices (Ryan, Thomas). On iPad, download Daniel or Arthur under Settings > Accessibility > Spoken Content > Voices > English (UK).");
+  }
   if (!male.length && !pickVoice.warned) {
     pickVoice.warned = true;
     addMsg("system", "This device has no male voice installed, so Calvin is using the closest one. On iPad: Settings > Accessibility > Spoken Content > Voices > English, download a male voice like Aaron or Daniel, then reload.");
