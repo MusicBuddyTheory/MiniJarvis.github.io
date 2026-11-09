@@ -87,7 +87,7 @@ function addMsg(role, text) {
 }
 
 addMsg("system", CONFIG.WORKER_URL
-  ? "Systems online. Type, or tap TALK and speak."
+  ? "Systems online. Type, or tap TALK and speak. Try: weather in King City, or directions from Vaughan Mills to Union Station by bus."
   : "Demo mode: no AI backend connected yet. Follow README.md to connect Claude. Try asking for the time or date.");
 
 // ---------- AI call ----------
@@ -212,9 +212,75 @@ async function tryWeather(text) {
   }
 }
 
+// ---------- Toronto directions, transit & traffic ----------
+// No free source of live bus times or traffic exists that works without keys,
+// so Calvin builds a Google Maps link, which shows live transit times and traffic.
+const DIR_WORDS = /\b(directions?|route|routes|how (?:do|can) (?:i|we) get|how to get|get to|how long (?:to|does it take)|navigate|commute|drive (?:to|from)|(?:walk|walking|bike|biking|cycle|cycling|ride|go) from|take the (?:bus|ttc|subway|train|streetcar)|bus(?:es)? (?:to|from)|ttc|go train|subway|streetcar|transit|traffic)\b/i;
+const TRANSIT_WORDS = /\b(bus|buses|ttc|subway|streetcar|train|go train|go transit|transit|metro|line \d|yrt|viva|up express)\b/i;
+
+function mapsMode(text) {
+  if (/\b(walk|walking|on foot)\b/i.test(text)) return "walking";
+  if (/\b(bike|biking|cycle|cycling|bicycle)\b/i.test(text)) return "bicycling";
+  if (TRANSIT_WORDS.test(text)) return "transit";
+  return "driving";
+}
+
+function cleanPlace(s) {
+  s = s.replace(/\s+(?:by|on|via|using|with)\s+(?:the\s+)?(?:bus|buses|ttc|subway|streetcar|train|go train|transit|car|foot|bike)\b.*$/i, "")
+       .replace(/\b(?:calvin|please)\b[,]?/gi, "")
+       .replace(/^(?:the\s+)/i, "")
+       .replace(/[?.!,]+$/g, "")
+       .trim();
+  if (!s) return "";
+  return /ontario|\bon\b|canada/i.test(s) ? s : s + ", Ontario, Canada";
+}
+
+function tryDirections(text) {
+  if (!DIR_WORDS.test(text)) return null;
+  // weather questions are handled elsewhere
+  const mode = mapsMode(text);
+  const label = { transit: "transit", driving: "driving", walking: "walking", bicycling: "cycling" }[mode];
+
+  // traffic overview (no destination given)
+  const hasTrip = /\b(?:from|to|toward|towards)\s+\S/i.test(text);
+  if (/\btraffic\b/i.test(text) && !hasTrip) {
+    return {
+      text: "I can't read live traffic myself, but this map shows current Toronto traffic. Tap the link.",
+      url: "https://www.google.com/maps/@43.70,-79.40,11z/data=!5m1!1e1",
+      linkText: "Open live Toronto traffic map",
+    };
+  }
+
+  let from = "", to = "";
+  let m = text.match(/\bfrom\s+(.+?)\s+(?:to|toward|towards)\s+(.+)$/i);
+  if (m) { from = cleanPlace(m[1]); to = cleanPlace(m[2]); }
+  else {
+    m = text.match(/\b(?:to|toward|towards)\s+(.+)$/i);
+    if (m) to = cleanPlace(m[1]);
+  }
+  if (!to) return { text: "Where are you headed? Try: directions from Vaughan Mills to Union Station by bus." };
+
+  const q = new URLSearchParams({ api: "1", destination: to, travelmode: mode });
+  if (from) q.set("origin", from);
+  const url = "https://www.google.com/maps/dir/?" + q.toString();
+
+  const place = (s) => s.replace(/, Ontario, Canada$/, "");
+  const trip = from ? "from " + place(from) + " to " + place(to) : "to " + place(to) + " from where you are";
+  const extra = mode === "transit"
+    ? " It shows the TTC, GO and YRT routes, the next departures and trip times."
+    : mode === "driving" ? " It shows the drive time with live traffic." : "";
+  return {
+    text: "Here are " + label + " directions " + trip + "." + extra + " Tap the link below.",
+    url,
+    linkText: "Open " + label + " directions",
+  };
+}
+
 async function askAI(text) {
   const weatherReply = await tryWeather(text);
   if (weatherReply) return weatherReply;
+  const dirReply = tryDirections(text);
+  if (dirReply) return dirReply;
   if (!CONFIG.WORKER_URL) return demoReply(text);
   const res = await fetch(CONFIG.WORKER_URL, {
     method: "POST",
@@ -237,9 +303,20 @@ async function send(text) {
   history.push({ role: "user", content: text });
   setState("thinking");
   try {
-    const reply = await askAI(text);
+    const result = await askAI(text);
+    const reply = typeof result === "string" ? result : result.text;
     history.push({ role: "assistant", content: reply });
-    addMsg("assistant", reply);
+    const body = addMsg("assistant", reply);
+    if (result && result.url && result.url.startsWith("https://www.google.com/maps/")) {
+      const link = document.createElement("a");
+      link.href = result.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "➜ " + (result.linkText || "Open map");
+      link.className = "maplink";
+      body.parentNode.appendChild(link);
+      els.log.scrollTop = els.log.scrollHeight;
+    }
     speak(reply);
   } catch (e) {
     history.pop(); // drop the failed user turn so history stays valid
@@ -266,88 +343,43 @@ els.clear.addEventListener("click", () => {
 });
 
 // ---------- voice out ----------
-const VOICE_KEY = "calvin_voice";
-const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-const PREFERRED_FIRST = ["mark", "guy", "ryan", "aaron", "daniel", "alex", "fred", "arthur", "tom"];
-let warnedNoMale = false;
-const voiceSel = $("voiceSel");
-let voices = [];
+// Calvin has ONE voice: the best male English voice this device has.
+let calvinVoice = null;
 let speakToken = 0;
 
-// Browsers don't say which voices are male, so recognise common male voice names.
-const MALE_NAMES = /\b(guy|ryan|christopher|eric|roger|steffan|brian|andrew|davis|jason|tony|william|mark|david|george|james|richard|sean|ravi|prabhat|liam|thomas|connor|mitchell|neil|jacob|alfie|elliot|rishi|daniel|alex|fred|aaron|arthur|gordon|evan|nathan|oliver|reed|tom|lee|ralph|henry|oscar|rocko|eddy|male|man)\b/i;
+// Browsers don't label voices by gender, so recognise common male voice names.
+const MALE_NAMES = /\b(guy|ryan|christopher|eric|roger|steffan|brian|andrew|davis|jason|tony|william|mark|david|george|james|richard|sean|ravi|prabhat|liam|thomas|connor|mitchell|neil|jacob|alfie|elliot|rishi|daniel|alex|fred|aaron|arthur|gordon|evan|nathan|oliver|reed|tom|lee|ralph|henry|oscar|male|man)\b/i;
 const isMale = (v) => MALE_NAMES.test(v.name) && !/female/i.test(v.name);
+// Warm, natural-sounding guys first.
+const PREFERRED = ["guy", "ryan", "mark", "andrew", "brian", "christopher", "aaron", "daniel", "alex", "arthur", "tom", "fred"];
 
-// Rank voices so the most natural-sounding ones come first.
 function scoreVoice(v) {
   const n = v.name.toLowerCase();
   let s = 0;
   if (/^en/i.test(v.lang)) s += 10;
-  if (/natural|neural|online/.test(n)) s += 50;      // Edge's neural voices sound best
-  if (/google uk english male|daniel|alex|fred/.test(n)) s += 15;
-  if (/google/.test(n)) s += 8;
+  if (/^en[-_](us|ca|gb)/i.test(v.lang)) s += 4;
+  if (/natural|neural|online/.test(n)) s += 50;
+  if (/google/.test(n)) s += 6;
   if (/espeak|compact|novelty/.test(n)) s -= 40;
+  const i = PREFERRED.findIndex((p) => n.includes(p));
+  if (i >= 0) s += 30 - i;
   return s;
 }
 
-function voiceLabel(v) {
-  const base = v.name.replace(/^Microsoft /, "").replace(/ - English.*$/, "").trim();
-  const region = (v.lang.split(/[-_]/)[1] || "").toUpperCase();
-  return region ? base + " · " + region : base;
-}
-
-function populateVoices() {
-  if (!("speechSynthesis" in window) || !voiceSel) return;
-  voices = speechSynthesis.getVoices()
-    .filter((v) => /^en/i.test(v.lang))
-    .sort((a, b) => scoreVoice(b) - scoreVoice(a));
-
-  const male = voices.filter(isMale);
-  const other = voices.filter((v) => !isMale(v));
-
-  let saved = "";
-  try { saved = localStorage.getItem(VOICE_KEY) || ""; } catch (_) {}
-
-  voiceSel.innerHTML = "";
-  const addGroup = (label, items) => {
-    if (!items.length) return;
-    const g = document.createElement("optgroup");
-    g.label = label;
-    items.forEach((it) => {
-      const o = document.createElement("option");
-      o.value = it.value;
-      o.textContent = it.text;
-      g.appendChild(o);
-    });
-    voiceSel.appendChild(g);
-  };
-
-  // every male voice, plus lower-pitched "deep" versions of the best few
-  const maleItems = [];
-  male.forEach((v) => maleItems.push({ value: v.name + "|1|1.03", text: voiceLabel(v) }));
-  if (!IS_IOS) male.slice(0, 6).forEach((v) => maleItems.push({ value: v.name + "|0.75|0.97", text: voiceLabel(v) + " (deep)" }));
-  addGroup("Male voices", maleItems);
-  addGroup("Other voices", other.map((v) => ({ value: v.name + "|1|1.03", text: voiceLabel(v) })));
-
-  const values = Array.from(voiceSel.options).map((o) => o.value);
-  if (values.length) {
-    let pick = values.includes(saved) ? saved : "";
-    if (!pick) {
-      for (const pref of PREFERRED_FIRST) {
-        pick = values.find((val) => val.endsWith("|1|1.03") && val.toLowerCase().includes(pref)) || "";
-        if (pick) break;
-      }
-    }
-    voiceSel.value = pick || values[0];
-  }
-  if (IS_IOS && !male.length && !warnedNoMale && voices.length) {
-    warnedNoMale = true;
-    addMsg("system", "No male voices are installed on this device yet. On iPad: Settings > Accessibility > Spoken Content > Voices > English, then download a male voice like Aaron or Daniel. Reload this page afterwards.");
+function pickVoice() {
+  if (!("speechSynthesis" in window)) return;
+  const all = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang));
+  if (!all.length) return;
+  const male = all.filter(isMale).sort((a, b) => scoreVoice(b) - scoreVoice(a));
+  calvinVoice = male[0] || all.sort((a, b) => scoreVoice(b) - scoreVoice(a))[0];
+  if (!male.length && !pickVoice.warned) {
+    pickVoice.warned = true;
+    addMsg("system", "This device has no male voice installed, so Calvin is using the closest one. On iPad: Settings > Accessibility > Spoken Content > Voices > English, download a male voice like Aaron or Daniel, then reload.");
   }
 }
 if ("speechSynthesis" in window) {
-  populateVoices();
-  speechSynthesis.onvoiceschanged = populateVoices;
+  pickVoice();
+  speechSynthesis.onvoiceschanged = pickVoice;
 }
 
 function cleanForSpeech(t) {
@@ -379,29 +411,18 @@ function speak(text) {
   const parts = chunks(cleanForSpeech(text).slice(0, 1200));
   if (!parts.length) { setState("online"); return; }
 
-  const [vName, vPitch, vRate] = (voiceSel && voiceSel.value ? voiceSel.value : "").split("|");
-  const chosen = voices.find((v) => v.name === vName);
+  const chosen = calvinVoice;
 
   parts.forEach((p, i) => {
     const u = new SpeechSynthesisUtterance(p);
     if (chosen) { u.voice = chosen; u.lang = chosen.lang; }
-    u.pitch = parseFloat(vPitch) || 1;
-    u.rate = parseFloat(vRate) || 1.03;
+    u.pitch = 0.95;
+    u.rate = 1.0;
     if (i === 0) u.onstart = () => { if (token === speakToken) setState("speaking"); };
     if (i === parts.length - 1) {
       u.onend = u.onerror = () => { if (token === speakToken) setState("online"); };
     }
     speechSynthesis.speak(u);
-  });
-}
-
-if (voiceSel) {
-  voiceSel.addEventListener("change", () => {
-    try { localStorage.setItem(VOICE_KEY, voiceSel.value); } catch (_) {}
-    const wasOn = voiceOn;
-    voiceOn = true;
-    speak("Hello, I'm Calvin. How does this voice sound?");
-    voiceOn = wasOn;
   });
 }
 
