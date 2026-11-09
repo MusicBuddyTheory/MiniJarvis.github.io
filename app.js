@@ -403,6 +403,7 @@ function chunks(t) {
 
 // ---------- Kokoro voice (British male "Lewis"), runs inside your browser ----------
 // Free and private: the model downloads once (about 80 MB) and is then cached by the browser.
+// OFF by default (heavy on tablets). Add ?kokoro=1 to the web address to turn it on.
 // If it can't load, Calvin quietly keeps using the built-in browser voice.
 const KOKORO = {
   voice: "bm_lewis",   // other British males: bm_george, bm_fable, bm_daniel
@@ -505,8 +506,10 @@ function kokoroFailed(msg) {
 }
 
 function initKokoro() {
-  if (/[?&]kokoro=0\b/.test(location.search)) return;          // ?kokoro=0 turns it off
+  // Kokoro is OFF by default: it is too heavy for most tablets and makes replies slow.
+  // Add ?kokoro=1 to the web address to try it on a fast computer.
   const force = /[?&]kokoro=1\b/.test(location.search);
+  if (!force) return;
   const prev = kvFlag();
   if (!force && prev === "loading") {
     // the page died while loading last time (usually not enough memory)
