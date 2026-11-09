@@ -411,7 +411,6 @@ const KOKORO = {
   lib: "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm",
   flag: "calvin_kokoro",
 };
-let kokoro = null;
 let kokoroState = "idle";   // idle | loading | ready | failed
 let playDone = null;
 
@@ -454,7 +453,59 @@ function setVPill(text, cls) {
 }
 setVPill("VOICE: BROWSER", "");
 
-async function initKokoro() {
+// The voice model runs in a background worker so the screen never freezes while Calvin "thinks".
+const KOKORO_WORKER_SRC = `
+let tts = null;
+let chain = Promise.resolve();
+async function handle(m) {
+  try {
+    if (m.type === "init") {
+      const mod = await import(m.lib);
+      const K = mod.KokoroTTS || (mod.default && mod.default.KokoroTTS);
+      tts = await K.from_pretrained(m.model, {
+        dtype: "q8", device: "wasm",
+        progress_callback: (p) => self.postMessage({ type: "progress", file: p.file, status: p.status, loaded: p.loaded, total: p.total }),
+      });
+      self.postMessage({ type: "ready" });
+    } else if (m.type === "speak") {
+      const a = await tts.generate(m.text, { voice: m.voice, speed: m.speed });
+      if (!a.toBlob) throw new Error("no audio output");
+      self.postMessage({ type: "audio", id: m.id, blob: a.toBlob() });
+    }
+  } catch (err) {
+    self.postMessage({ type: "error", id: m.id, message: String((err && err.message) || err) });
+  }
+}
+self.onmessage = (e) => { chain = chain.then(() => handle(e.data)); };
+`;
+
+let kWorker = null;
+let kId = 0;
+const kPending = {};
+
+function kokoroGenerate(text) {
+  return new Promise((resolve, reject) => {
+    const id = ++kId;
+    const timer = setTimeout(() => { delete kPending[id]; reject(new Error("voice took too long")); }, 30000);
+    kPending[id] = {
+      resolve: (b) => { clearTimeout(timer); resolve(b); },
+      reject: (e) => { clearTimeout(timer); reject(e); },
+    };
+    kWorker.postMessage({ type: "speak", id, text, voice: KOKORO.voice, speed: KOKORO.speed });
+  });
+}
+
+function kokoroFailed(msg) {
+  kokoroState = "failed";
+  kvFlag("");   // not a crash, so try again next visit
+  setVPill("VOICE: BROWSER", "");
+  addMsg("system", "Couldn't load the Kokoro voice (" + msg + "). Calvin is using the browser voice instead.");
+  try { if (kWorker) kWorker.terminate(); } catch (_) {}
+  kWorker = null;
+}
+
+function initKokoro() {
+  if (/[?&]kokoro=0\b/.test(location.search)) return;          // ?kokoro=0 turns it off
   const force = /[?&]kokoro=1\b/.test(location.search);
   const prev = kvFlag();
   if (!force && prev === "loading") {
@@ -464,32 +515,41 @@ async function initKokoro() {
     return;
   }
   if (!force && prev === "failed") return;
+  if (!window.Worker) return;
 
   kokoroState = "loading";
   kvFlag("loading");
   setVPill("VOICE: LOADING…", "demo");
   const files = {};
-  const onProgress = (p) => {
-    if (p && p.status === "progress" && p.total) {
-      files[p.file] = { l: p.loaded, t: p.total };
-      let l = 0, t = 0;
-      for (const k in files) { l += files[k].l; t += files[k].t; }
-      setVPill("VOICE: LOADING " + Math.round((100 * l) / t) + "%", "demo");
+
+  try {
+    const url = URL.createObjectURL(new Blob([KOKORO_WORKER_SRC], { type: "text/javascript" }));
+    kWorker = new Worker(url, { type: "module" });
+  } catch (err) { kokoroFailed((err && err.message) || "workers not supported"); return; }
+
+  kWorker.onerror = (e) => { if (kokoroState === "loading") kokoroFailed((e && e.message) || "worker error"); };
+  kWorker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === "progress") {
+      if (m.status === "progress" && m.total) {
+        files[m.file] = { l: m.loaded, t: m.total };
+        let l = 0, t = 0;
+        for (const k in files) { l += files[k].l; t += files[k].t; }
+        setVPill("VOICE: LOADING " + Math.round((100 * l) / t) + "%", "demo");
+      }
+    } else if (m.type === "ready") {
+      kokoroState = "ready";
+      kvFlag("ok");
+      setVPill("VOICE: KOKORO", "ok");
+    } else if (m.type === "audio") {
+      const pnd = kPending[m.id]; delete kPending[m.id];
+      if (pnd) pnd.resolve(m.blob);
+    } else if (m.type === "error") {
+      if (m.id && kPending[m.id]) { const pnd = kPending[m.id]; delete kPending[m.id]; pnd.reject(new Error(m.message)); }
+      else if (kokoroState === "loading") kokoroFailed(m.message);
     }
   };
-  try {
-    const mod = await import(KOKORO.lib);
-    const KokoroTTS = mod.KokoroTTS || (mod.default && mod.default.KokoroTTS);
-    kokoro = await KokoroTTS.from_pretrained(KOKORO.model, { dtype: "q8", device: "wasm", progress_callback: onProgress });
-    kokoroState = "ready";
-    kvFlag("ok");
-    setVPill("VOICE: KOKORO", "ok");
-  } catch (err) {
-    kokoroState = "failed";
-    kvFlag("");   // not a crash, so try again next visit
-    setVPill("VOICE: BROWSER", "");
-    addMsg("system", "Couldn't load the Kokoro voice (" + ((err && err.message) || err) + "). Calvin is using the browser voice instead.");
-  }
+  kWorker.postMessage({ type: "init", lib: KOKORO.lib, model: KOKORO.model });
 }
 
 function playBlob(blob) {
@@ -508,18 +568,16 @@ function playBlob(blob) {
 async function speakKokoro(text, token) {
   const parts = chunks(cleanForSpeech(text).slice(0, 1200));
   if (!parts.length) { setState("online"); return; }
-  const opts = { voice: KOKORO.voice, speed: KOKORO.speed };
   setState("thinking");
   let started = false;
   try {
-    let next = kokoro.generate(parts[0], opts);
+    let next = kokoroGenerate(parts[0]);
     for (let i = 0; i < parts.length; i++) {
-      const audio = await next;
+      const blob = await next;
       if (token !== speakToken) return;
       // start making the next sentence while this one plays
-      next = i + 1 < parts.length ? kokoro.generate(parts[i + 1], opts) : null;
+      next = i + 1 < parts.length ? kokoroGenerate(parts[i + 1]) : null;
       if (next) next.catch(() => {});
-      const blob = audio.toBlob ? audio.toBlob() : new Blob([audio.toWav()], { type: "audio/wav" });
       started = true;
       setState("speaking");
       await playBlob(blob);
