@@ -435,20 +435,30 @@ els.tts.addEventListener("click", () => {
 });
 
 // ---------- voice in ----------
+// Two ways to hear you:
+//  1) the browser's built-in speech recognition (Chrome, Edge, Safari), or
+//  2) a backup that records your voice and sends it to your Worker for free
+//     speech-to-text. Brave blocks (1), so Brave uses (2) automatically.
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 
 const MIC_HELP = {
   "not-allowed": "Microphone access is blocked for this site. Click the lock icon next to the web address, set Microphone to Allow, then reload the page.",
   "service-not-allowed": "Microphone access is blocked for this site. Click the lock icon next to the web address, set Microphone to Allow, then reload the page.",
   "audio-capture": "No microphone found. Check that one is connected and selected in your system sound settings.",
-  "network": "The browser's speech service couldn't be reached. Brave and some other browsers block it. Try Chrome or Edge, and check your internet connection.",
+  "network": "The browser's speech service couldn't be reached. Check your internet connection and try again.",
   "no-speech": "I didn't hear anything. Tap TALK, then start speaking right away.",
 };
 
-if (!SR) {
+let useRecorder = !SR;
+if (navigator.brave && navigator.brave.isBrave) {
+  navigator.brave.isBrave().then((b) => { if (b) useRecorder = true; }).catch(() => {});
+}
+
+if (!SR && !canRecord) {
   els.mic.disabled = true;
-  els.mic.title = "Speech recognition isn't supported in this browser (try Chrome or Edge).";
-  addMsg("system", "Voice input isn't supported in this browser. Try Chrome or Edge. Typing still works.");
+  els.mic.title = "This browser can't capture your voice. Try Chrome, Edge or Safari.";
+  addMsg("system", "Voice input isn't supported in this browser. Try Chrome, Edge or Safari. Typing still works.");
 } else {
   let rec = null;
   let listening = false;
@@ -462,6 +472,13 @@ if (!SR) {
     els.mic.textContent = "🎙 TALK";
   };
 
+  const setMicActive = () => {
+    els.mic.classList.add("active");
+    els.mic.textContent = "🎙 LISTENING…";
+    setState("listening");
+  };
+
+  // ----- (1) built-in recognition -----
   function startListening() {
     if (busy) return;
     if ("speechSynthesis" in window) speechSynthesis.cancel();
@@ -473,28 +490,27 @@ if (!SR) {
     failed = false;
     els.input.value = "";
 
-    rec.onstart = () => {
-      listening = true;
-      els.mic.classList.add("active");
-      els.mic.textContent = "🎙 LISTENING…";
-      setState("listening");
-    };
+    rec.onstart = () => { listening = true; setMicActive(); };
 
     rec.onresult = (e) => {
       // Use only the newest result: each one already holds the full phrase so far.
-      // (Adding them together is what made iPad repeat words over and over.)
       const last = e.results[e.results.length - 1];
       const heard = ((last && last[0] && last[0].transcript) || "").trim();
       if (last && last.isFinal) finalText = heard;
       els.input.value = heard;
-      // after a short pause in speech, stop and send
       clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => { try { rec.stop(); } catch (_) {} }, 1800);
     };
 
     rec.onerror = (e) => {
       failed = true;
-      if (e.error !== "aborted") addMsg("system", MIC_HELP[e.error] || ("Microphone error: " + e.error));
+      if (e.error === "aborted") return;
+      if (e.error === "network" && canRecord) {
+        useRecorder = true;
+        addMsg("system", "This browser blocks built-in speech recognition (Brave does this). Switched to the backup microphone. Tap TALK again.");
+      } else {
+        addMsg("system", MIC_HELP[e.error] || ("Microphone error: " + e.error));
+      }
     };
 
     rec.onend = () => {
@@ -509,8 +525,97 @@ if (!SR) {
     catch (err) { resetMicUI(); addMsg("system", "Couldn't start the microphone: " + err.message); }
   }
 
+  // ----- (2) backup: record, then transcribe on the Worker -----
+  let mr = null, stream = null, audioCtx = null, rafId = 0;
+  let recChunks = [], recording = false, recHeard = false;
+
+  function stopRecording() {
+    recording = false;
+    cancelAnimationFrame(rafId);
+    if (mr && mr.state !== "inactive") { try { mr.stop(); } catch (_) {} }
+  }
+
+  function releaseMic() {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    if (audioCtx) { try { audioCtx.close(); } catch (_) {} }
+    stream = null; audioCtx = null;
+  }
+
+  async function transcribe(blob) {
+    const url = new URL("/transcribe", CONFIG.WORKER_URL).toString();
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob });
+    if (!res.ok) throw new Error("Transcription failed (" + res.status + "). Make sure you pasted the newest worker.js into Cloudflare and deployed it.");
+    const data = await res.json();
+    return (data.text || "").trim();
+  }
+
+  async function startRecording() {
+    if (busy) return;
+    if (!CONFIG.WORKER_URL) { addMsg("system", "Voice input in this browser needs the AI backend connected first."); return; }
+    if (!canRecord) { addMsg("system", "This browser can't record audio. Try Chrome, Edge or Safari, or type instead."); return; }
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (_) { addMsg("system", MIC_HELP["not-allowed"]); return; }
+
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"].find((m) => MediaRecorder.isTypeSupported(m));
+    mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    recChunks = []; recHeard = false; recording = true;
+    mr.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+    mr.onstop = async () => {
+      releaseMic();
+      resetMicUI();
+      const blob = new Blob(recChunks, { type: (mr && mr.mimeType) || "audio/webm" });
+      if (!recHeard || blob.size < 1500) {
+        setState("online");
+        addMsg("system", MIC_HELP["no-speech"]);
+        return;
+      }
+      setState("thinking");
+      try {
+        const text = await transcribe(blob);
+        if (text) send(text);
+        else { setState("online"); addMsg("system", "I couldn't make out any words. Try again a little closer to the mic."); }
+      } catch (err) {
+        setState("online");
+        addMsg("system", "Error: " + err.message);
+      }
+    };
+    mr.start();
+    listening = true;
+    setMicActive();
+
+    // stop automatically ~1.5 s after you stop talking
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.resume) audioCtx.resume();
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      audioCtx.createMediaStreamSource(stream).connect(analyser);
+      const buf = new Uint8Array(analyser.fftSize);
+      const t0 = Date.now();
+      let lastLoud = t0;
+      const loop = () => {
+        if (!recording) return;
+        analyser.getByteTimeDomainData(buf);
+        let peak = 0;
+        for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i] - 128));
+        const now = Date.now();
+        if (peak > 14) { recHeard = true; lastLoud = now; }
+        if ((recHeard && now - lastLoud > 1500) || now - t0 > 15000 || (!recHeard && now - t0 > 8000)) { stopRecording(); return; }
+        rafId = requestAnimationFrame(loop);
+      };
+      rafId = requestAnimationFrame(loop);
+    } catch (_) {
+      // no audio analysis available: just record for up to 6 seconds
+      recHeard = true;
+      setTimeout(stopRecording, 6000);
+    }
+  }
+
   els.mic.addEventListener("click", () => {
-    if (listening) { try { rec.stop(); } catch (_) {} }
-    else startListening();
+    if (recording) { stopRecording(); return; }
+    if (listening && rec) { try { rec.stop(); } catch (_) {} return; }
+    if (useRecorder) startRecording(); else startListening();
   });
 }
