@@ -337,7 +337,7 @@ els.form.addEventListener("submit", (e) => {
 els.clear.addEventListener("click", () => {
   history = []; msgCount = 0; els.count.textContent = 0;
   els.log.innerHTML = "";
-  window.speechSynthesis && speechSynthesis.cancel();
+  stopSpeaking();
   addMsg("system", "Log cleared.");
   setState("online");
 });
@@ -373,14 +373,6 @@ function pickVoice() {
   if (!all.length) return;
   const male = all.filter(isMale).sort((a, b) => scoreVoice(b) - scoreVoice(a));
   calvinVoice = male[0] || all.sort((a, b) => scoreVoice(b) - scoreVoice(a))[0];
-  if (male.length && !/^en[-_]gb/i.test(calvinVoice.lang) && !pickVoice.warnedGB) {
-    pickVoice.warnedGB = true;
-    addMsg("system", "No British male voice found on this device, so Calvin is using the closest one. Edge has the best British voices (Ryan, Thomas). On iPad, download Daniel or Arthur under Settings > Accessibility > Spoken Content > Voices > English (UK).");
-  }
-  if (!male.length && !pickVoice.warned) {
-    pickVoice.warned = true;
-    addMsg("system", "This device has no male voice installed, so Calvin is using the closest one. On iPad: Settings > Accessibility > Spoken Content > Voices > English, download a male voice like Aaron or Daniel, then reload.");
-  }
 }
 if ("speechSynthesis" in window) {
   pickVoice();
@@ -409,15 +401,144 @@ function chunks(t) {
   return out;
 }
 
-function speak(text) {
-  if (!voiceOn || !("speechSynthesis" in window)) { setState("online"); return; }
-  if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
-  const token = ++speakToken;
+// ---------- Kokoro voice (British male "Lewis"), runs inside your browser ----------
+// Free and private: the model downloads once (about 80 MB) and is then cached by the browser.
+// If it can't load, Calvin quietly keeps using the built-in browser voice.
+const KOKORO = {
+  voice: "bm_lewis",   // other British males: bm_george, bm_fable, bm_daniel
+  speed: 1.0,
+  model: "onnx-community/Kokoro-82M-v1.0-ONNX",
+  lib: "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm",
+  flag: "calvin_kokoro",
+};
+let kokoro = null;
+let kokoroState = "idle";   // idle | loading | ready | failed
+let playDone = null;
+
+const player = new Audio();
+player.preload = "auto";
+const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+let audioUnlocked = false;
+// iPad/Safari only allow audio that was "unlocked" by a tap, so unlock once on the first tap.
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try {
+    player.src = SILENT_WAV;
+    const pr = player.play();
+    if (pr && pr.catch) pr.catch(() => { audioUnlocked = false; });
+  } catch (_) { audioUnlocked = false; }
+}
+["pointerdown", "touchend", "keydown", "click"].forEach((ev) => addEventListener(ev, unlockAudio, { passive: true }));
+
+function stopSpeaking() {
+  try { player.pause(); } catch (_) {}
+  if (playDone) { const d = playDone; playDone = null; d(); }
+  if ("speechSynthesis" in window && (speechSynthesis.speaking || speechSynthesis.pending)) speechSynthesis.cancel();
+}
+
+function kvFlag(v) {
+  try {
+    if (v === undefined) return localStorage.getItem(KOKORO.flag) || "";
+    localStorage.setItem(KOKORO.flag, v);
+  } catch (_) {}
+  return "";
+}
+
+const vpill = document.createElement("span");
+vpill.className = "pill";
+els.net.parentNode.insertBefore(vpill, els.net);
+function setVPill(text, cls) {
+  vpill.textContent = text;
+  vpill.className = "pill" + (cls ? " " + cls : "");
+}
+setVPill("VOICE: BROWSER", "");
+
+async function initKokoro() {
+  const force = /[?&]kokoro=1\b/.test(location.search);
+  const prev = kvFlag();
+  if (!force && prev === "loading") {
+    // the page died while loading last time (usually not enough memory)
+    kvFlag("failed");
+    addMsg("system", "The Kokoro voice crashed this device last time, so Calvin is using the browser voice. Add ?kokoro=1 to the web address to try again.");
+    return;
+  }
+  if (!force && prev === "failed") return;
+
+  kokoroState = "loading";
+  kvFlag("loading");
+  setVPill("VOICE: LOADING…", "demo");
+  const files = {};
+  const onProgress = (p) => {
+    if (p && p.status === "progress" && p.total) {
+      files[p.file] = { l: p.loaded, t: p.total };
+      let l = 0, t = 0;
+      for (const k in files) { l += files[k].l; t += files[k].t; }
+      setVPill("VOICE: LOADING " + Math.round((100 * l) / t) + "%", "demo");
+    }
+  };
+  try {
+    const mod = await import(KOKORO.lib);
+    const KokoroTTS = mod.KokoroTTS || (mod.default && mod.default.KokoroTTS);
+    kokoro = await KokoroTTS.from_pretrained(KOKORO.model, { dtype: "q8", device: "wasm", progress_callback: onProgress });
+    kokoroState = "ready";
+    kvFlag("ok");
+    setVPill("VOICE: KOKORO", "ok");
+  } catch (err) {
+    kokoroState = "failed";
+    kvFlag("");   // not a crash, so try again next visit
+    setVPill("VOICE: BROWSER", "");
+    addMsg("system", "Couldn't load the Kokoro voice (" + ((err && err.message) || err) + "). Calvin is using the browser voice instead.");
+  }
+}
+
+function playBlob(blob) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const done = () => { player.onended = player.onerror = null; playDone = null; URL.revokeObjectURL(url); resolve(); };
+    playDone = done;
+    player.onended = done;
+    player.onerror = done;
+    player.src = url;
+    const pr = player.play();
+    if (pr && pr.catch) pr.catch(done);
+  });
+}
+
+async function speakKokoro(text, token) {
+  const parts = chunks(cleanForSpeech(text).slice(0, 1200));
+  if (!parts.length) { setState("online"); return; }
+  const opts = { voice: KOKORO.voice, speed: KOKORO.speed };
+  setState("thinking");
+  let started = false;
+  try {
+    let next = kokoro.generate(parts[0], opts);
+    for (let i = 0; i < parts.length; i++) {
+      const audio = await next;
+      if (token !== speakToken) return;
+      // start making the next sentence while this one plays
+      next = i + 1 < parts.length ? kokoro.generate(parts[i + 1], opts) : null;
+      if (next) next.catch(() => {});
+      const blob = audio.toBlob ? audio.toBlob() : new Blob([audio.toWav()], { type: "audio/wav" });
+      started = true;
+      setState("speaking");
+      await playBlob(blob);
+      if (token !== speakToken) return;
+    }
+    setState("online");
+  } catch (err) {
+    if (!started) throw err;          // nothing played yet: let the browser voice take over
+    if (token === speakToken) setState("online");
+  }
+}
+
+// ---------- browser voice (fallback) ----------
+function speakBrowser(text, token) {
+  if (!("speechSynthesis" in window)) { setState("online"); return; }
   const parts = chunks(cleanForSpeech(text).slice(0, 1200));
   if (!parts.length) { setState("online"); return; }
 
   const chosen = calvinVoice;
-
   parts.forEach((p, i) => {
     const u = new SpeechSynthesisUtterance(p);
     if (chosen) { u.voice = chosen; u.lang = chosen.lang; }
@@ -431,11 +552,22 @@ function speak(text) {
   });
 }
 
+function speak(text) {
+  if (!voiceOn) { setState("online"); return; }
+  stopSpeaking();
+  const token = ++speakToken;
+  if (kokoroState === "ready") {
+    speakKokoro(text, token).catch(() => { if (token === speakToken) speakBrowser(text, token); });
+    return;
+  }
+  speakBrowser(text, token);
+}
+
 els.tts.addEventListener("click", () => {
   voiceOn = !voiceOn;
   els.tts.textContent = "🔊 VOICE: " + (voiceOn ? "ON" : "OFF");
   els.tts.classList.toggle("on", voiceOn);
-  if (!voiceOn) speechSynthesis.cancel();
+  if (!voiceOn) stopSpeaking();
   setState("online");
 });
 
@@ -486,7 +618,7 @@ if (!SR && !canRecord) {
   // ----- (1) built-in recognition -----
   function startListening() {
     if (busy) return;
-    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    stopSpeaking();
     rec = new SR();
     rec.lang = navigator.language || "en-US";
     rec.interimResults = true;
@@ -558,7 +690,7 @@ if (!SR && !canRecord) {
     if (busy) return;
     if (!CONFIG.WORKER_URL) { addMsg("system", "Voice input in this browser needs the AI backend connected first."); return; }
     if (!canRecord) { addMsg("system", "This browser can't record audio. Try Chrome, Edge or Safari, or type instead."); return; }
-    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    stopSpeaking();
 
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
     catch (_) { addMsg("system", MIC_HELP["not-allowed"]); return; }
@@ -624,3 +756,5 @@ if (!SR && !canRecord) {
     if (useRecorder) startRecording(); else startListening();
   });
 }
+
+initKokoro();
