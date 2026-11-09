@@ -758,3 +758,55 @@ if (!SR && !canRecord) {
 }
 
 initKokoro();
+
+// ---------- full screen + keep screen on (for a nightstand tablet) ----------
+(function () {
+  const btn = $("fsBtn");
+  if (!btn) return;
+  const root = document.documentElement;
+  const reqFS = root.requestFullscreen || root.webkitRequestFullscreen;
+  const exitFS = document.exitFullscreen || document.webkitExitFullscreen;
+  const isFS = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+  const installed = (window.matchMedia && matchMedia("(display-mode: fullscreen), (display-mode: standalone)").matches) || navigator.standalone === true;
+
+  // Opened from the home screen icon: already full screen, so no button needed.
+  if (installed) btn.hidden = true;
+
+  let wantAwake = installed;
+  let lock = null;
+  async function keepAwake() {
+    try {
+      if ("wakeLock" in navigator && !lock) {
+        lock = await navigator.wakeLock.request("screen");
+        lock.addEventListener("release", () => { lock = null; });
+      }
+    } catch (_) {}
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && wantAwake) keepAwake();
+  });
+  if (installed) {
+    keepAwake();
+    addEventListener("pointerdown", keepAwake, { once: true, passive: true });
+  }
+
+  const paint = () => {
+    const on = isFS();
+    btn.textContent = on ? "✕" : "⛶";
+    btn.title = btn.ariaLabel = on ? "Exit full screen" : "Full screen";
+  };
+  document.addEventListener("fullscreenchange", paint);
+  document.addEventListener("webkitfullscreenchange", paint);
+
+  btn.addEventListener("click", async () => {
+    if (isFS()) { try { exitFS.call(document); } catch (_) {} return; }
+    if (reqFS) {
+      try { await reqFS.call(root); } catch (_) {}
+      wantAwake = true;        // screen stays on while Calvin is open full screen
+      keepAwake();
+      if (isFS()) return;
+    }
+    addMsg("system", "This browser can't go full screen from a button (iPhone Safari is one). Tap Share, then Add to Home Screen, and open Calvin from the new icon for a full screen view.");
+  });
+  paint();
+})();
