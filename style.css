@@ -287,3 +287,6 @@ select.btn option { background: #06202f; color: #dff8ff; }
 
 select.btn optgroup { background: #06202f; color: #7dd8f0; font-style: normal; }
 select.btn { max-width: 230px; }
+
+.maplink { display: inline-block; margin-top: 8px; padding: 6px 10px; border: 1px solid var(--amber); color: var(--amber); text-decoration: none; font-family: var(--font); font-size: 11px; letter-spacing: 0.12em; }
+.maplink:hover { background: rgba(255, 190, 90, 0.18); box-shadow: 0 0 12px rgba(255, 190, 90, 0.5); }
