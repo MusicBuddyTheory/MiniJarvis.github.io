@@ -290,3 +290,22 @@ select.btn { max-width: 230px; }
 
 .maplink { display: inline-block; margin-top: 8px; padding: 6px 10px; border: 1px solid var(--amber); color: var(--amber); text-decoration: none; font-family: var(--font); font-size: 11px; letter-spacing: 0.12em; }
 .maplink:hover { background: rgba(255, 190, 90, 0.18); box-shadow: 0 0 12px rgba(255, 190, 90, 0.5); }
+
+/* ================= FULL SCREEN BUTTON (touch devices) ================= */
+.fs-btn {
+  display: none;
+  position: fixed; z-index: 60;
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  width: 46px; height: 46px;
+  align-items: center; justify-content: center;
+  font-size: 22px; line-height: 1;
+  color: #d6f8ff; background: rgba(8, 44, 72, 0.72);
+  border: 1px solid var(--cyan); border-radius: 6px;
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  box-shadow: 0 0 14px rgba(95, 220, 255, 0.4);
+  cursor: pointer;
+}
+.fs-btn:active { background: rgba(95, 220, 255, 0.3); }
+@media (pointer: coarse), (max-width: 1000px) { .fs-btn { display: flex; } }
+.fs-btn[hidden] { display: none !important; }
